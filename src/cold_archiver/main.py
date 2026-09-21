@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
+from zipfile import ZipFile, ZIP_DEFLATED
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,25 @@ def build_directory_manifest(directory: str) -> dict[str, FileRecord]:
 
     return results
 
+def zip_directory(directory: str, manifest: dict[str, FileRecord], destination: str):
+    """
+
+    :param directory: The directory to zip
+    :param manifest: The manifest of the files in the directory to zip
+    :param destination: The destination of the zipfile
+    """
+
+    with ZipFile(destination, "w", compression=ZIP_DEFLATED) as archive:
+        for file_path, file_record in manifest.items():
+            absolute_path = Path(os.path.join(directory, file_path))
+
+            if not absolute_path.is_file():
+                raise ValueError("Trying to archive something that is not a file!")
+
+            archive.write(absolute_path, arcname=file_path)
+
+
+
 
 def json_default_handler(val):
     if hasattr(val, "__json__"):
@@ -97,6 +117,14 @@ def main():
     manifest = build_directory_manifest(args.source)
 
     print(json.dumps(manifest, indent=4, default=json_default_handler))
+
+    current_time = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    destination_zip = os.path.join(args.source, f"backup-{current_time}.zip")
+    zip_directory(args.source, manifest, destination_zip)
+
+    zip_checksum = get_file_checksum(destination_zip)
+
+    print(f"Created zip at {destination_zip}({zip_checksum})")
 
 if __name__ == "__main__":
     main()
