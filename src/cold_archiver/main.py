@@ -51,15 +51,23 @@ def get_file_checksum(file_path: str) -> str:
         return hashlib.file_digest(file, "sha256").hexdigest().upper()
 
 
+def get_path_relative_to(file_path: str, base_path: str) -> str:
+    base = Path(base_path)
+    file = Path(file_path)
+    return str(file.relative_to(base))
+
+
 def build_directory_manifest(directory: str) -> dict[str, FileRecord]:
     results: dict[str, FileRecord] = {}
 
     for root, _, files in os.walk(directory):
         for filename in files:
             full_path = os.path.join(root, filename)
+            relative_path = get_path_relative_to(full_path, directory)
 
-            results[full_path] = FileRecord(
-                path=full_path,
+
+            results[relative_path] = FileRecord(
+                path=relative_path,
                 checksum=get_file_checksum(full_path),
                 last_modified=get_file_modified_date(full_path),
             )
@@ -75,6 +83,7 @@ def json_default_handler(val):
         return val.isoformat()
 
     return TypeError(f"Cannot serialize {type(val).__name__}")
+
 
 def main():
     arg_parser = argparse.ArgumentParser(
