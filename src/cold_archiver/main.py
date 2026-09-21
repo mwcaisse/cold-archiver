@@ -26,6 +26,9 @@ from pathlib import Path
 from typing import NamedTuple
 from zipfile import ZipFile, ZIP_DEFLATED
 
+from cold_archiver.config import load_credentials, load_config
+from cold_archiver.object_store import ObjectStoreClient
+
 
 @dataclass(frozen=True)
 class FileRecord:
@@ -105,6 +108,35 @@ def json_default_handler(val):
     return TypeError(f"Cannot serialize {type(val).__name__}")
 
 
+def append_hash_to_zip_file_name(file_name: str, sha: str) -> str:
+    return file_name.replace(".zip", f"-{sha[:8]}.zip")
+
+
+def upload_archive_to_object_store(archive_path: str):
+    """
+    Uploads
+    :param archive_path:
+    :return:
+    """
+
+    # TODO: load these elsewhere? but for now this works
+    credentials = load_credentials("credentials.toml")
+    config = load_config("config.toml")
+
+    client = ObjectStoreClient(credentials=credentials, config=config)
+
+    archive_hash = get_file_checksum(archive_path)
+    object_store_file_name = append_hash_to_zip_file_name(os.path.basename(archive_path), archive_hash)
+
+    hash_file_name = f"{object_store_file_name}.sha256"
+    hash_file_contents = f"{archive_hash} {Path(archive_path).name}\n".encode("utf-8")
+
+    s3_archive_path = client.upload_file(archive_path, object_store_file_name, "application/zip")
+    client.upload_bytes(hash_file_contents, hash_file_name, "plain/text")
+
+    print(f"Uploaded archive to {s3_archive_path}")
+
+
 def main():
     arg_parser = argparse.ArgumentParser(
         description="Backup a directory to S3-compat storage"
@@ -125,6 +157,8 @@ def main():
     zip_checksum = get_file_checksum(destination_zip)
 
     print(f"Created zip at {destination_zip}({zip_checksum})")
+
+    upload_archive_to_object_store(destination_zip)
 
 if __name__ == "__main__":
     main()
