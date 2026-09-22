@@ -1,8 +1,10 @@
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 
-from sqlalchemy import BigInteger, ForeignKey, String
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import URL, BigInteger, Engine, ForeignKey, String, create_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 
 class ColdArchiverBase(DeclarativeBase):
@@ -53,3 +55,23 @@ class BackupEntry(ColdArchiverBase):
     #   TODO: We could add in mode n such later too? but for now just created + modified are fine
     size: Mapped[int] = mapped_column(BigInteger)
     modified_ns: Mapped[int] = mapped_column(BigInteger)
+
+
+def create_database_engine() -> Engine:
+    engine = create_engine(
+        URL.create(
+            drivername="sqlite",
+            database="backups.sqlite",
+        )
+    )
+
+    # TODO: eventually use alembic, but for now / first pass this works fine
+    ColdArchiverBase.metadata.create_all(engine)
+
+    return engine
+
+
+@contextmanager
+def create_database_session(engine: Engine) -> Iterator[Session]:
+    with Session(engine, expire_on_commit=False) as session, session.begin():
+        yield session

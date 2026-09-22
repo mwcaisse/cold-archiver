@@ -7,28 +7,35 @@ from datetime import UTC, datetime
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
+from sqlalchemy import Engine, select
+
 from cold_archiver.config import load_config, load_credentials
+from cold_archiver.db import (
+    Backup,
+    BackupArchive,
+    BackupEntry,
+    create_database_engine,
+    create_database_session,
+)
 from cold_archiver.object_store import ObjectStoreClient
 
 
 @dataclass(frozen=True)
 class FileRecord:
     path: str
+    filename: str
     checksum: str
-    last_modified: datetime
+    size: int
+    modified_ns: int
 
     def __json__(self):
         return {
             "path": self.path,
+            "filename": self.filename,
             "checksum": self.checksum,
-            "last_modified": self.last_modified,
+            "size": self.size,
+            "modified_ns": self.modified_ns,
         }
-
-
-def get_file_modified_date(file_path: str) -> datetime:
-    path = Path(file_path)
-    stat = path.stat()
-    return datetime.fromtimestamp(stat.st_mtime, tz=UTC)
 
 
 def get_file_checksum(file_path: str) -> str:
@@ -42,6 +49,18 @@ def get_path_relative_to(file_path: str, base_path: str) -> str:
     return str(file.relative_to(base))
 
 
+def get_file_metadata(file_path: str) -> FileRecord:
+    stat = Path(file_path).stat()
+
+    return FileRecord(
+        path=file_path,
+        filename=os.path.basename(file_path),
+        checksum=get_file_checksum(file_path),
+        size=stat.st_size,
+        modified_ns=stat.st_mtime_ns,
+    )
+
+
 def build_directory_manifest(directory: str) -> dict[str, FileRecord]:
     results: dict[str, FileRecord] = {}
 
@@ -49,11 +68,14 @@ def build_directory_manifest(directory: str) -> dict[str, FileRecord]:
         for filename in files:
             full_path = os.path.join(root, filename)
             relative_path = get_path_relative_to(full_path, directory)
+            stat = Path(full_path).stat()
 
             results[relative_path] = FileRecord(
                 path=relative_path,
+                filename=filename,
                 checksum=get_file_checksum(full_path),
-                last_modified=get_file_modified_date(full_path),
+                size=stat.st_size,
+                modified_ns=stat.st_mtime_ns,
             )
 
     return results
@@ -91,12 +113,7 @@ def append_hash_to_zip_file_name(file_name: str, sha: str) -> str:
     return file_name.replace(".zip", f"-{sha[:8]}.zip")
 
 
-def upload_archive_to_object_store(archive_path: str):
-    """
-    Uploads
-    :param archive_path:
-    :return:
-    """
+def upload_archive_to_object_store(archive: FileRecord) -> str:
 
     # TODO: load these elsewhere? but for now this works
     credentials = load_credentials("credentials.toml")
@@ -104,20 +121,62 @@ def upload_archive_to_object_store(archive_path: str):
 
     client = ObjectStoreClient(credentials=credentials, config=config)
 
-    archive_hash = get_file_checksum(archive_path)
     object_store_file_name = append_hash_to_zip_file_name(
-        os.path.basename(archive_path), archive_hash
+        archive.filename, archive.checksum
     )
 
     hash_file_name = f"{object_store_file_name}.sha256"
-    hash_file_contents = f"{archive_hash} {Path(archive_path).name}\n".encode()
+    hash_file_contents = f"{archive.checksum} {archive.filename}\n".encode()
 
     s3_archive_path = client.upload_file(
-        archive_path, object_store_file_name, "application/zip"
+        archive.path, object_store_file_name, "application/zip"
     )
     client.upload_bytes(hash_file_contents, hash_file_name, "plain/text")
 
     print(f"Uploaded archive to {s3_archive_path}")
+
+    return s3_archive_path
+
+
+def persist_backup_metadata_to_db(
+    db: Engine,
+    manifest: dict[str, FileRecord],
+    backup_archive: FileRecord,
+    backup_archive_storage_path: str,
+):
+    with create_database_session(db) as session:
+        # TODO: We need more support for incremental, but this is the base
+        existing_query = select(Backup).order_by(Backup.sequence_number.desc())
+        parent_backup = session.scalars(existing_query).first()
+
+        backup = Backup(
+            parent_id=parent_backup.id if parent_backup is not None else None,
+            sequence_number=max(
+                1, parent_backup.sequence_number if parent_backup is not None else 0
+            ),
+        )
+        session.add(backup)
+        session.flush()
+
+        db_backup_archive = BackupArchive(
+            backup_id=backup.id,
+            sha256=backup_archive.checksum,
+            name=backup_archive.filename,
+            storage_key=backup_archive_storage_path,
+            size=backup_archive.size,
+        )
+
+        session.add(db_backup_archive)
+
+        for entry in manifest.values():
+            db_entry = BackupEntry(
+                backup_id=backup.id,
+                path=entry.path,
+                sha256=entry.checksum,
+                size=entry.size,
+                modified_ns=entry.modified_ns,
+            )
+            session.add(db_entry)
 
 
 def main():
@@ -137,11 +196,17 @@ def main():
     destination_zip = os.path.join(args.source, f"backup-{current_time}.zip")
     zip_directory(args.source, manifest, destination_zip)
 
-    zip_checksum = get_file_checksum(destination_zip)
+    zip_metadata = get_file_metadata(destination_zip)
 
-    print(f"Created zip at {destination_zip}({zip_checksum})")
+    print(f"Created zip at {zip_metadata.path}({zip_metadata.checksum})")
 
-    upload_archive_to_object_store(destination_zip)
+    storage_path = upload_archive_to_object_store(zip_metadata)
+
+    db_engine = create_database_engine()
+
+    persist_backup_metadata_to_db(db_engine, manifest, zip_metadata, storage_path)
+
+    print("Persisted backup to backups.sqlite")
 
 
 if __name__ == "__main__":
