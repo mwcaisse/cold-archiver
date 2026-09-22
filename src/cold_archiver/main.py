@@ -1,32 +1,13 @@
-
-"""
-
-Cold Archiver
-
-* Want to upload a directory to S3 bucket/prefix path for archiving / backup
-* On first run: all the files in the directory will be zipped up and uploaded
-* It on later runs: It should only update files that are new or have changed
-    * If no files have changed or been updated, then there are no changes
-
-* Need to figure out how to handle deleted files
-    * We don't want to modify a backup zip once it has been uploaded.
-    * So deleting a file wouldn't remove it from the backup on S3
-    * But we'd need a way to remove it from disc on restore / know it has been deleted
-
-* We should have a command that can be used to restore the back up as well
-
-"""
 import argparse
 import hashlib
 import json
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import NamedTuple
-from zipfile import ZipFile, ZIP_DEFLATED
+from zipfile import ZIP_DEFLATED, ZipFile
 
-from cold_archiver.config import load_credentials, load_config
+from cold_archiver.config import load_config, load_credentials
 from cold_archiver.object_store import ObjectStoreClient
 
 
@@ -47,7 +28,7 @@ class FileRecord:
 def get_file_modified_date(file_path: str) -> datetime:
     path = Path(file_path)
     stat = path.stat()
-    return datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+    return datetime.fromtimestamp(stat.st_mtime, tz=UTC)
 
 
 def get_file_checksum(file_path: str) -> str:
@@ -69,7 +50,6 @@ def build_directory_manifest(directory: str) -> dict[str, FileRecord]:
             full_path = os.path.join(root, filename)
             relative_path = get_path_relative_to(full_path, directory)
 
-
             results[relative_path] = FileRecord(
                 path=relative_path,
                 checksum=get_file_checksum(full_path),
@@ -77,6 +57,7 @@ def build_directory_manifest(directory: str) -> dict[str, FileRecord]:
             )
 
     return results
+
 
 def zip_directory(directory: str, manifest: dict[str, FileRecord], destination: str):
     """
@@ -87,15 +68,13 @@ def zip_directory(directory: str, manifest: dict[str, FileRecord], destination: 
     """
 
     with ZipFile(destination, "w", compression=ZIP_DEFLATED) as archive:
-        for file_path, file_record in manifest.items():
+        for file_path in manifest:
             absolute_path = Path(os.path.join(directory, file_path))
 
             if not absolute_path.is_file():
                 raise ValueError("Trying to archive something that is not a file!")
 
             archive.write(absolute_path, arcname=file_path)
-
-
 
 
 def json_default_handler(val):
@@ -126,12 +105,16 @@ def upload_archive_to_object_store(archive_path: str):
     client = ObjectStoreClient(credentials=credentials, config=config)
 
     archive_hash = get_file_checksum(archive_path)
-    object_store_file_name = append_hash_to_zip_file_name(os.path.basename(archive_path), archive_hash)
+    object_store_file_name = append_hash_to_zip_file_name(
+        os.path.basename(archive_path), archive_hash
+    )
 
     hash_file_name = f"{object_store_file_name}.sha256"
-    hash_file_contents = f"{archive_hash} {Path(archive_path).name}\n".encode("utf-8")
+    hash_file_contents = f"{archive_hash} {Path(archive_path).name}\n".encode()
 
-    s3_archive_path = client.upload_file(archive_path, object_store_file_name, "application/zip")
+    s3_archive_path = client.upload_file(
+        archive_path, object_store_file_name, "application/zip"
+    )
     client.upload_bytes(hash_file_contents, hash_file_name, "plain/text")
 
     print(f"Uploaded archive to {s3_archive_path}")
@@ -150,7 +133,7 @@ def main():
 
     print(json.dumps(manifest, indent=4, default=json_default_handler))
 
-    current_time = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    current_time = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
     destination_zip = os.path.join(args.source, f"backup-{current_time}.zip")
     zip_directory(args.source, manifest, destination_zip)
 
@@ -159,6 +142,7 @@ def main():
     print(f"Created zip at {destination_zip}({zip_checksum})")
 
     upload_archive_to_object_store(destination_zip)
+
 
 if __name__ == "__main__":
     main()

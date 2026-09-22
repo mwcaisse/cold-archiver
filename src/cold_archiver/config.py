@@ -6,6 +6,7 @@ class ObjectStoreCredentials(NamedTuple):
     access_key: str
     secret_key: str
 
+
 class ObjectStoreConfiguration(NamedTuple):
     endpoint: str
     region: str
@@ -34,4 +35,3 @@ def load_credentials(credentials_file: str) -> ObjectStoreCredentials:
         access_key=toml["access_key"],
         secret_key=toml["secret_key"],
     )
-
