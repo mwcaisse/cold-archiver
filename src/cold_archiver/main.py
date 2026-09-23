@@ -4,7 +4,7 @@ import json
 import os
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -21,7 +21,7 @@ from cold_archiver.database.models import (
     BackupSource,
     BackupSourceAssignment,
 )
-from cold_archiver.models import BackupManifest
+from cold_archiver.models import BackupManifest, FileChangeType
 from cold_archiver.object_store import ObjectStoreClient
 
 
@@ -66,22 +66,19 @@ def get_file_metadata(file_path: str) -> FileRecord:
     )
 
 
-def zip_directory(directory: str, manifest: dict[str, FileRecord], destination: str):
-    """
+def create_backup_archive(manifest: BackupManifest, zip_file_destination: str):
+    with ZipFile(zip_file_destination, "w", compression=ZIP_DEFLATED) as archive:
+        for change in manifest.file_changes:
+            # Only add files that have been added or modified
+            if change.change_type in {FileChangeType.NEW, FileChangeType.MODIFIED}:
+                absolute_path = Path(
+                    os.path.join(manifest.local_directory, change.current.path)
+                )
 
-    :param directory: The directory to zip
-    :param manifest: The manifest of the files in the directory to zip
-    :param destination: The destination of the zipfile
-    """
+                if not absolute_path.is_file():
+                    raise ValueError("Trying to archive something that is not a file!")
 
-    with ZipFile(destination, "w", compression=ZIP_DEFLATED) as archive:
-        for file_path in manifest:
-            absolute_path = Path(os.path.join(directory, file_path))
-
-            if not absolute_path.is_file():
-                raise ValueError("Trying to archive something that is not a file!")
-
-            archive.write(absolute_path, arcname=file_path)
+                archive.write(absolute_path, arcname=change.current.path)
 
 
 def json_default_handler(val):
@@ -226,18 +223,21 @@ def main():
             f"Found the following files: \n {json.dumps(manifest.file_changes, indent=4, default=json_default_handler)}"
         )
 
+    # TODO: Handle what happens when there are no changes or only changes are deletions
+    #   if only changes are deletions, then we don't need to create a zipfile
+    #   Honestly we could probably just skip performing the backup at that point
+
     persist_backup_metadata_to_db(db_context, manifest)
     print("Saved backup manifest to database")
 
+    current_time = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
+    destination_zip = os.path.join(args.source, f"backup-{current_time}.zip")
+    create_backup_archive(manifest, destination_zip)
+
+    zip_metadata = get_file_metadata(destination_zip)
+    print(f"Created zip at {zip_metadata.path}({zip_metadata.checksum})")
+
     # TODO: re-implement this, but for now this is fine
-    # current_time = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
-    # destination_zip = os.path.join(args.source, f"backup-{current_time}.zip")
-    # zip_directory(args.source, manifest, destination_zip)
-    #
-    # zip_metadata = get_file_metadata(destination_zip)
-    #
-    # print(f"Created zip at {zip_metadata.path}({zip_metadata.checksum})")
-    #
     # storage_path = upload_archive_to_object_store(zip_metadata)
     #
     # persist_backup_metadata_to_db(db_context, manifest, zip_metadata, storage_path)
