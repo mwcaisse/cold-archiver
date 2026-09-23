@@ -1,7 +1,7 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from sqlalchemy import URL, Engine, create_engine, event
+from sqlalchemy import URL, Engine, PoolProxiedConnection, create_engine, event
 from sqlalchemy.orm import Session
 
 from cold_archiver.database.config import DatabaseConfig
@@ -45,3 +45,9 @@ class DatabaseContext:
     def create_session(self) -> Iterator[Session]:
         with Session(self._engine, expire_on_commit=False) as session, session.begin():
             yield session
+
+    def raw_connection(self) -> PoolProxiedConnection:
+        return self._engine.raw_connection()
+
+    def close(self):
+        self._engine.dispose()
