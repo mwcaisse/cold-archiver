@@ -1,10 +1,8 @@
 import uuid
-from collections.abc import Iterator
-from contextlib import contextmanager
 from datetime import UTC, datetime
 
-from sqlalchemy import URL, BigInteger, Engine, ForeignKey, String, create_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
+from sqlalchemy import BigInteger, ForeignKey, String
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class ColdArchiverBase(DeclarativeBase):
@@ -15,6 +13,29 @@ def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+class BackupSource(ColdArchiverBase):
+    __tablename__ = "backup_source"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    local_path: Mapped[str] = mapped_column(nullable=False, unique=True)
+
+
+class BackupSourceAssignment(ColdArchiverBase):
+    __tablename__ = "backup_source_assignment"
+
+    backup_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("backup.id"),
+        primary_key=True,
+    )
+
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("backup_source.id"), index=True, nullable=False
+    )
+
+
+# TODO: Add one entity above this to represent the backup "series" i.e. these are all back ups of the same thing
+#   then the sequence number is which one in the backup, parent_id becomes redudant in a way
+#   but probably leave both
 class Backup(ColdArchiverBase):
     __tablename__ = "backup"
 
@@ -22,9 +43,7 @@ class Backup(ColdArchiverBase):
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("backup.id"), nullable=True
     )
-    sequence_number: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, unique=True
-    )
+    sequence_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
     date_created: Mapped[datetime] = mapped_column(nullable=False, default=utc_now)
 
@@ -55,23 +74,3 @@ class BackupEntry(ColdArchiverBase):
     #   TODO: We could add in mode n such later too? but for now just created + modified are fine
     size: Mapped[int] = mapped_column(BigInteger)
     modified_ns: Mapped[int] = mapped_column(BigInteger)
-
-
-def create_database_engine() -> Engine:
-    engine = create_engine(
-        URL.create(
-            drivername="sqlite",
-            database="backups.sqlite",
-        )
-    )
-
-    # TODO: eventually use alembic, but for now / first pass this works fine
-    ColdArchiverBase.metadata.create_all(engine)
-
-    return engine
-
-
-@contextmanager
-def create_database_session(engine: Engine) -> Iterator[Session]:
-    with Session(engine, expire_on_commit=False) as session, session.begin():
-        yield session
