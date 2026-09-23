@@ -1,5 +1,6 @@
 import os
 from io import BytesIO
+from pathlib import Path
 
 from minio import Minio, S3Error
 
@@ -21,14 +22,14 @@ class ObjectStoreClient:
         self.bucket = config.bucket
         self.prefix = config.prefix
 
-    def upload_file(self, local_path: str, object_name: str, content_type: str):
+    def upload_file(self, local_path: Path, object_name: str, content_type: str):
         object_key = self._create_object_path(object_name)
 
         try:
             self._client.fput_object(
                 bucket_name=self.bucket,
                 object_name=object_key,
-                file_path=local_path,
+                file_path=str(local_path),
                 content_type=content_type,
             )
 

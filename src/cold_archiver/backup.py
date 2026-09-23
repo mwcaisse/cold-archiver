@@ -1,10 +1,10 @@
 import json
-import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from select import select
 from zipfile import ZIP_DEFLATED, ZipFile
+
+from sqlalchemy import select
 
 from cold_archiver.backup_manifest_builder import BackupManifestBuilder
 from cold_archiver.config import load_config, load_credentials
@@ -50,7 +50,7 @@ def perform_backup(directory: str):
     print("Saved backup manifest to database")
 
     current_time = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
-    destination_zip = os.path.join(backup_directory, f"backup-{current_time}.zip")
+    destination_zip = Path.joinpath(backup_directory, f"backup-{current_time}.zip")
     create_backup_archive(manifest, destination_zip)
 
     zip_metadata = get_file_metadata(destination_zip)
@@ -119,7 +119,7 @@ def persist_backup_metadata_to_db(
         for entry in manifest.current_files.values():
             db_entry = BackupEntry(
                 backup_id=backup.id,
-                path=entry.path,
+                path=str(entry.path),
                 sha256=entry.checksum,
                 size=entry.size,
                 modified_ns=entry.modified_ns,
@@ -135,7 +135,7 @@ def persist_backup_metadata_to_db(
             )
         ).one_or_none()
         if backup_source is None:
-            backup_source = BackupSource(local_path=manifest.local_directory)
+            backup_source = BackupSource(local_path=str(manifest.local_directory))
             session.add(backup_source)
             session.flush()
 
@@ -145,13 +145,13 @@ def persist_backup_metadata_to_db(
         session.add(assignment)
 
 
-def create_backup_archive(manifest: BackupManifest, zip_file_destination: str):
+def create_backup_archive(manifest: BackupManifest, zip_file_destination: Path):
     with ZipFile(zip_file_destination, "w", compression=ZIP_DEFLATED) as archive:
         for change in manifest.file_changes:
             # Only add files that have been added or modified
             if change.change_type in {FileChangeType.NEW, FileChangeType.MODIFIED}:
-                absolute_path = Path(
-                    os.path.join(manifest.local_directory, change.current.path)
+                absolute_path = Path.joinpath(
+                    manifest.local_directory, change.current.path
                 )
 
                 if not absolute_path.is_file():
