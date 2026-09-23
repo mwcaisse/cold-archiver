@@ -11,7 +11,7 @@ from cold_archiver.database.models import (
     BackupSourceAssignment,
 )
 from cold_archiver.models import BackupManifest, FileChange, FileChangeType, FileRecord
-from cold_archiver.utils import get_file_checksum, get_path_relative_to
+from cold_archiver.utils.files import get_file_checksum, get_path_relative_to
 
 
 class BackupManifestBuilder:
@@ -22,7 +22,7 @@ class BackupManifestBuilder:
     def __init__(self, db: DatabaseContext):
         self._db = db
 
-    def build_backup_manifest(self, directory: str) -> BackupManifest:
+    def build_backup_manifest(self, directory: Path) -> BackupManifest:
         """
         Given a directory, builds the manifest for the given directory
         :param directory:
@@ -98,7 +98,7 @@ class BackupManifestBuilder:
                 parent_backup_id=None,
             )
 
-    def _get_latest_backup_for_directory(self, directory: str) -> Backup | None:
+    def _get_latest_backup_for_directory(self, directory: Path) -> Backup | None:
         with self._db.create_session() as session:
             backup_source = session.scalars(
                 select(BackupSource).where(BackupSource.local_path == directory)
@@ -118,15 +118,15 @@ class BackupManifestBuilder:
                 .order_by(Backup.date_created.desc())
             ).first()
 
-    def _get_manifest_for_backup(self, backup: Backup) -> dict[str, FileRecord]:
+    def _get_manifest_for_backup(self, backup: Backup) -> dict[Path, FileRecord]:
         with self._db.create_session() as session:
             backup_entries = session.scalars(
                 select(BackupEntry).where(BackupEntry.backup_id == backup.id)
             ).all()
 
             return {
-                entry.path: FileRecord(
-                    path=entry.path,
+                Path(entry.path): FileRecord(
+                    path=Path(entry.path),
                     filename=os.path.basename(entry.path),
                     checksum=entry.sha256,
                     size=entry.size,
@@ -136,12 +136,12 @@ class BackupManifestBuilder:
             }
 
     @staticmethod
-    def _build_directory_manifest(directory: str) -> dict[str, FileRecord]:
-        results: dict[str, FileRecord] = {}
+    def _build_directory_manifest(directory: Path) -> dict[Path, FileRecord]:
+        results: dict[Path, FileRecord] = {}
 
         for root, _, files in os.walk(directory):
             for filename in files:
-                full_path = os.path.join(root, filename)
+                full_path = Path.joinpath(Path(root), filename)
                 relative_path = get_path_relative_to(full_path, directory)
                 stat = Path(full_path).stat()
 

@@ -5,18 +5,18 @@ from pathlib import Path
 from cold_archiver.models import FileRecord
 
 
-def get_file_checksum(file_path: str) -> str:
+def get_file_checksum(file_path: Path) -> str:
     with open(file_path, "rb") as file:
         return hashlib.file_digest(file, "sha256").hexdigest().upper()
 
 
-def get_path_relative_to(file_path: str, base_path: str) -> str:
+def get_path_relative_to(file_path: Path, base_path: Path) -> Path:
     base = Path(base_path)
     file = Path(file_path)
-    return str(file.relative_to(base))
+    return file.relative_to(base)
 
 
-def get_file_metadata(file_path: str) -> FileRecord:
+def get_file_metadata(file_path: Path) -> FileRecord:
     stat = Path(file_path).stat()
 
     return FileRecord(

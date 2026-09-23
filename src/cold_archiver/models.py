@@ -1,11 +1,12 @@
 import uuid
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 
 
 @dataclass(frozen=True)
 class FileRecord:
-    path: str
+    path: Path
     filename: str
     checksum: str
     size: int
@@ -44,9 +45,9 @@ class FileChange:
 
 @dataclass(frozen=True)
 class BackupManifest:
-    local_directory: str
+    local_directory: Path
     # The current files in this backup -- i.e. the files on disc when this backup was taken
-    current_files: dict[str, FileRecord]
+    current_files: dict[Path, FileRecord]
 
     # The files that have changed since the last backup
     file_changes: list[FileChange]
