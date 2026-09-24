@@ -1,4 +1,5 @@
 import json
+import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,6 +25,50 @@ from cold_archiver.utils.files import get_file_metadata
 from cold_archiver.utils.json_utils import json_default_handler
 
 
+def get_or_create_backup_source(db: DatabaseContext, directory: Path) -> BackupSource:
+    with db.create_session() as session:
+        backup_source = session.scalars(
+            select(BackupSource).where(BackupSource.path == str(directory))
+        ).one_or_none()
+
+        if backup_source is None:
+            backup_source = BackupSource(
+                local_path=str(directory),
+            )
+            session.add(backup_source)
+            session.flush()
+
+        return backup_source
+
+
+def create_backup_record(
+    db: DatabaseContext, backup_source_id: uuid.UUID, parent_id: uuid.UUID | None
+) -> Backup:
+    with db.create_session() as session:
+        parent_backup: Backup | None = None
+
+        if parent_id is not None:
+            parent_backup = session.scalars(
+                select(Backup).where(Backup.id == parent_id)
+            ).one()
+
+        backup = Backup(
+            parent_id=parent_backup.id if parent_backup is not None else None,
+            sequence_number=parent_backup.sequence_number + 1
+            if parent_backup is not None
+            else 1,
+        )
+        session.add(backup)
+        session.flush()
+
+        assignment = BackupSourceAssignment(
+            backup_id=backup.id, source_id=backup_source_id
+        )
+        session.add(assignment)
+
+    return backup
+
+
 def perform_backup(directory: str):
     """
     Performs the backup on the given directory
@@ -39,10 +84,15 @@ def perform_backup(directory: str):
 
     # Construct our config
     db_config = DatabaseConfig(database_file="backups.sqlite")
+    credentials = load_credentials("credentials.toml")
+    config = load_config("config.toml")
 
     # Build our services n what not here
     db_context = DatabaseContext(db_config)
     manifest_builder = BackupManifestBuilder(db_context)
+    object_store_client = ObjectStoreClient(credentials=credentials, config=config)
+
+    backup_source = get_or_create_backup_source(db_context, backup_directory)
 
     # Create the current manifest
     manifest = manifest_builder.build_backup_manifest(backup_directory)
@@ -53,6 +103,11 @@ def perform_backup(directory: str):
         print("No changes between current state and previous backup. Nothing to do.")
         return
 
+    # Create our backup
+    backup = create_backup_record(
+        db_context, backup_source.id, manifest.parent_backup_id
+    )
+
     with TemporaryDirectory() as working_dir:
         current_time = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
         backup_archive_path = Path(working_dir).joinpath(f"backup-{current_time}.zip")
@@ -61,13 +116,31 @@ def perform_backup(directory: str):
         zip_metadata = get_file_metadata(backup_archive_path)
 
         # Upload the zipfile to object store
-        storage_path = upload_archive_to_object_store(zip_metadata)
+        storage_path = upload_backup_file_with_hash(
+            object_store_client,
+            zip_metadata,
+            backup.id,
+            "archive.zip",
+        )
 
-        persist_backup_metadata_to_db(db_context, manifest, zip_metadata, storage_path)
+        create_db_backup_entries(db_context, backup.id, manifest)
+        create_db_backup_archive(db_context, backup.id, zip_metadata, storage_path)
 
-        # TODO: We need to get the backup source ID
         manifest_db_file = Path(working_dir).joinpath("manifest.sqlite")
-        create_backup_manifest_database(manifest_db_file, db_context, uuid.uuid4())
+        create_backup_manifest_database(manifest_db_file, db_context, backup_source.id)
+
+        manifest_db_metadata = get_file_metadata(manifest_db_file)
+
+        manifest_storage_path = upload_backup_file_with_hash(
+            object_store_client,
+            manifest_db_metadata,
+            backup.id,
+            "manifest.sqlite",
+        )
+
+        upload_backup_latest_manifest(
+            object_store_client, backup, manifest_db_metadata, manifest_storage_path
+        )
 
     print("Backup completed successfully!")
 
@@ -103,32 +176,13 @@ def log_backup_manifest_changes(manifest: BackupManifest):
         )
 
 
-def persist_backup_metadata_to_db(
-    db: DatabaseContext,
-    manifest: BackupManifest,
-    backup_archive_metadata: FileRecord,
-    backup_archive_storage_path: str,
+def create_db_backup_entries(
+    db: DatabaseContext, backup_id: uuid.UUID, manifest: BackupManifest
 ):
     with db.create_session() as session:
-        parent_backup: Backup | None = None
-
-        if manifest.parent_backup_id is not None:
-            parent_backup = session.scalars(
-                select(Backup).where(Backup.id == manifest.parent_backup_id)
-            ).one()
-
-        backup = Backup(
-            parent_id=parent_backup.id if parent_backup is not None else None,
-            sequence_number=parent_backup.sequence_number + 1
-            if parent_backup is not None
-            else 1,
-        )
-        session.add(backup)
-        session.flush()
-
         for entry in manifest.current_files.values():
             db_entry = BackupEntry(
-                backup_id=backup.id,
+                backup_id=backup_id,
                 path=str(entry.path),
                 sha256=entry.checksum,
                 size=entry.size,
@@ -136,27 +190,17 @@ def persist_backup_metadata_to_db(
             )
             session.add(db_entry)
 
-        # Create or get our backup source
-        #   and create our backup source assignment
 
-        backup_source = session.scalars(
-            select(BackupSource).where(
-                BackupSource.local_path == manifest.local_directory
-            )
-        ).one_or_none()
-        if backup_source is None:
-            backup_source = BackupSource(local_path=str(manifest.local_directory))
-            session.add(backup_source)
-            session.flush()
-
-        assignment = BackupSourceAssignment(
-            backup_id=backup.id, source_id=backup_source.id
-        )
-        session.add(assignment)
-
+def create_db_backup_archive(
+    db: DatabaseContext,
+    backup_id: uuid.UUID,
+    backup_archive_metadata: FileRecord,
+    backup_archive_storage_path: str,
+):
+    with db.create_session() as session:
         # Create our BackupArchive entry
         backup_archive = BackupArchive(
-            backup_id=backup.id,
+            backup_id=backup_id,
             sha256=backup_archive_metadata.checksum,
             name=backup_archive_metadata.filename,
             storage_key=backup_archive_storage_path,
@@ -184,29 +228,68 @@ def append_hash_to_zip_file_name(file_name: str, sha: str) -> str:
     return file_name.replace(".zip", f"-{sha[:8]}.zip")
 
 
-def upload_archive_to_object_store(archive: FileRecord) -> str:
+def build_backup_latest_manifest(
+    backup: Backup, manifest_file: FileRecord, manifest_storage_path: str
+) -> dict:
+    return {
+        "version": 1,
+        "backup_id": backup.id,
+        "created_at": backup.date_created,
+        "manifest": {
+            "key": manifest_storage_path,
+            "sha256": manifest_file.checksum,
+            "size": manifest_file.size,
+        },
+    }
 
-    # TODO: load these elsewhere? but for now this works
-    credentials = load_credentials("credentials.toml")
-    config = load_config("config.toml")
 
-    client = ObjectStoreClient(credentials=credentials, config=config)
+def upload_backup_latest_manifest(
+    client: ObjectStoreClient,
+    backup: Backup,
+    manifest_file: FileRecord,
+    manifest_storage_path: str,
+):
+    contents = json.dumps(
+        build_backup_latest_manifest(backup, manifest_file, manifest_storage_path),
+        default=json_default_handler,
+    ).encode()
+    storage_key = "latest.json"
 
-    object_store_file_name = append_hash_to_zip_file_name(
-        archive.filename, archive.checksum
+    return client.upload_bytes(
+        contents, storage_key, get_file_content_type(storage_key)
     )
 
-    hash_file_name = f"{object_store_file_name}.sha256"
-    hash_file_contents = f"{archive.checksum} {archive.filename}\n".encode()
 
-    s3_archive_path = client.upload_file(
-        archive.path, object_store_file_name, "application/zip"
+def get_file_content_type(file_name: str) -> str:
+    if file_name.endswith(".zip"):
+        return "application/zip"
+    elif file_name.endswith(".sha256"):
+        return "text/plain"
+    elif file_name.endswith(".sqlite"):
+        return "application/vnd.sqlite3"
+    elif file_name.endswith(".json"):
+        return "application/json"
+
+    raise ValueError("Attempted to upload unknown file type to S3")
+
+
+def upload_backup_file_with_hash(
+    client: ObjectStoreClient,
+    file: FileRecord,
+    backup_id: uuid.UUID,
+    file_name: str,
+) -> str:
+    storage_key = os.path.join(str(backup_id), file_name)
+    hash_file_key = f"{storage_key}.sha256"
+
+    hash_file_contents = f"{file.checksum} {file_name}\n".encode()
+
+    storage_path = client.upload_file(
+        file.path, storage_key, get_file_content_type(file_name)
     )
-    client.upload_bytes(hash_file_contents, hash_file_name, "plain/text")
+    client.upload_bytes(hash_file_contents, hash_file_key, "plain/text")
 
-    print(f"Uploaded archive to {s3_archive_path}")
-
-    return s3_archive_path
+    return storage_path
 
 
 def persist_backup_archive_to_db(
