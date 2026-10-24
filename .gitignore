@@ -5,8 +5,8 @@ __pycache__/**
 
 *.zip
 
-config.toml
-credentials.toml
+config.yaml
+credentials.yaml
 
 backups.sqlite
 
