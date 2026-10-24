@@ -3,7 +3,11 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cold_archiver.config import load_config, load_credentials, resolve_config_path
+from cold_archiver.config import (
+    initialize_config,
+    load_credentials,
+    resolve_config_path,
+)
 
 
 def write_credentials(credentials_path: Path) -> None:
@@ -58,7 +62,7 @@ def test_load_config_parses_yaml_and_resolves_relative_paths(
     )
 
     monkeypatch.chdir(tmp_path)
-    config = load_config("settings/config.yaml")
+    config = initialize_config("settings/config.yaml")
 
     assert config.s3.endpoint == "storage.example.com"
     assert config.s3.region == "test-region"
@@ -90,7 +94,7 @@ def test_load_config_preserves_absolute_paths(tmp_path: Path) -> None:
         database_path=str(database_path),
     )
 
-    config = load_config(str(config_path))
+    config = initialize_config(str(config_path))
 
     assert config.credentials_path == str(credentials_path)
     assert config.database.path == str(database_path)
@@ -118,7 +122,7 @@ backups: []
     )
 
     with pytest.raises(ValidationError, match="s3"):
-        load_config(str(config_path))
+        initialize_config(str(config_path))
 
 
 def test_resolve_config_path_normalizes_parent_segments(tmp_path: Path) -> None:

@@ -44,9 +44,15 @@ class ColdArchiverConfiguration(BaseSettings):
     s3_credentials: ObjectStoreCredentials | None = None
 
 
-def load_config(config_file: str) -> ColdArchiverConfiguration:
+_config: ColdArchiverConfiguration | None = None
+
+
+def initialize_config(config_file: str) -> ColdArchiverConfiguration:
+
     config_path = Path(config_file).expanduser().resolve()
     config_base_dir = config_path.parent
+
+    print(f"Initializing configuration from {config_path}")
 
     source = YamlConfigSettingsSource(
         ColdArchiverConfiguration,
@@ -62,7 +68,16 @@ def load_config(config_file: str) -> ColdArchiverConfiguration:
     # load in s3 credentials
     config.s3_credentials = load_credentials(config.credentials_path)
 
+    global _config
+    _config = config
     return config
+
+
+def get_config() -> ColdArchiverConfiguration:
+    if _config is None:
+        raise RuntimeError("Configuration has not been initialized")
+
+    return _config
 
 
 def load_credentials(credentials_file: str) -> ObjectStoreCredentials:

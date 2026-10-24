@@ -9,8 +9,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from sqlalchemy import select
 
 from cold_archiver.backup_manifest_builder import BackupManifestBuilder
-from cold_archiver.config import load_config, load_credentials
-from cold_archiver.database.config import DatabaseConfig
+from cold_archiver.config import DatabaseConfiguration, get_config
 from cold_archiver.database.context import DatabaseContext
 from cold_archiver.database.models import (
     Backup,
@@ -69,7 +68,7 @@ def create_backup_record(
     return backup
 
 
-def perform_backup(directory: str):
+def perform_backup(directory: str, s3_prefix: str) -> None:
     """
     Performs the backup on the given directory
 
@@ -82,15 +81,14 @@ def perform_backup(directory: str):
     if not backup_directory.is_dir():
         raise ValueError(f"Given backup directory does not exist ({backup_directory}")
 
-    # Construct our config
-    db_config = DatabaseConfig(database_file="backups.sqlite")
-    credentials = load_credentials("credentials.toml")
-    config = load_config("config.toml")
+    config = get_config()
 
     # Build our services n what not here
-    db_context = DatabaseContext(db_config)
+    db_context = DatabaseContext(config.database)
     manifest_builder = BackupManifestBuilder(db_context)
-    object_store_client = ObjectStoreClient(credentials=credentials, config=config)
+    object_store_client = ObjectStoreClient(
+        credentials=config.s3_credentials, config=config.s3
+    )
 
     backup_source = get_or_create_backup_source(db_context, backup_directory)
 
@@ -322,7 +320,7 @@ def create_backup_manifest_database(
     """
 
     # Initializing the manifest databae, creating schema + db file
-    manifest_db = DatabaseContext(DatabaseConfig(database_file=str(db_file)))
+    manifest_db = DatabaseContext(DatabaseConfiguration(path=str(db_file)))
     manifest_db.close()
 
     connection = db.raw_connection()

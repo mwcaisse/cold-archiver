@@ -1,6 +1,7 @@
 import argparse
 
-from cold_archiver.config import load_config
+from cold_archiver.backup import perform_backup
+from cold_archiver.config import initialize_config
 
 
 def main():
@@ -15,13 +16,14 @@ def main():
     )
 
     args = arg_parser.parse_args()
-    print(f"Config from {args.config}")
-    config = load_config(args.config)
+    config = initialize_config(args.config)
 
-    print("Loaded config!")
-    print(config.model_dump_json(indent=4))
+    if len(config.backups) == 0:
+        print("No backup targets found.")
+        return
 
-    # perform_backup("AAAH")
+    for backup in config.backups:
+        perform_backup(backup.local_path, backup.s3_prefix)
 
 
 if __name__ == "__main__":

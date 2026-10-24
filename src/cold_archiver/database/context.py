@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from sqlalchemy import URL, Engine, PoolProxiedConnection, create_engine, event
 from sqlalchemy.orm import Session
 
-from cold_archiver.database.config import DatabaseConfig
+from cold_archiver.config import DatabaseConfiguration
 from cold_archiver.database.models import ColdArchiverBase
 
 
@@ -21,7 +21,7 @@ def enable_sqlite_foreign_keys(dbapi_connection, _connection_record):
 
 
 class DatabaseContext:
-    def __init__(self, config: DatabaseConfig):
+    def __init__(self, config: DatabaseConfiguration):
         self._config = config
 
         self._engine = self._create_engine()
@@ -30,7 +30,7 @@ class DatabaseContext:
         engine = create_engine(
             URL.create(
                 drivername="sqlite",
-                database=self._config.database_file,
+                database=self._config.path,
             )
         )
 
