@@ -50,7 +50,7 @@ def load_config(config_file: str) -> ColdArchiverConfiguration:
 
     source = YamlConfigSettingsSource(
         ColdArchiverConfiguration,
-        yaml_file=config_file,
+        yaml_file=config_path,
     )
     config = ColdArchiverConfiguration(**source())
 
@@ -80,8 +80,8 @@ def resolve_config_path(path: str, base_path: Path) -> str:
     :param base_path:
     :return:
     """
-    path_path = Path(path).expanduser().resolve()
+    path_path = Path(path).expanduser()
     if not path_path.is_absolute():
-        return str(base_path.joinpath(path_path))
+        path_path = base_path.joinpath(path_path)
 
-    return str(path_path)
+    return str(path_path.resolve())

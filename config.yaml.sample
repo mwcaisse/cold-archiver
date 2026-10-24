@@ -1,0 +1,18 @@
+
+s3:
+  endpoint: "nyc3.digitaloceanspaces.com"
+  region: "nyc3"
+  bucket: "my-backups"
+  prefix: "program"
+
+credentials_path: credentials.yaml
+
+database:
+  path: "backups.sqlite"
+
+backups:
+  - local_path: "/opt/backup1"
+    s3_prefix: "backup_1"
+
+  - local_path: "/opt/backup2"
+    s3_prefix: "backup_2"
