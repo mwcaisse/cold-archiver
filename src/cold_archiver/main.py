@@ -14,6 +14,12 @@ def main():
         help="Path to config file",
         default="/opt/cold-archiver/config.yaml",
     )
+    arg_parser.add_argument(
+        "--target",
+        type=str,
+        help="The target to backup. If not specified will backup all targets",
+        default=None,
+    )
 
     args = arg_parser.parse_args()
     config = initialize_config(args.config)
@@ -23,6 +29,9 @@ def main():
         return
 
     for backup in config.backups:
+        if args.target is not None and backup.name.lower() != args.target.lower():
+            continue
+
         perform_backup(backup.local_path, backup.s3_prefix)
 
 

@@ -27,7 +27,7 @@ from cold_archiver.utils.json_utils import json_default_handler
 def get_or_create_backup_source(db: DatabaseContext, directory: Path) -> BackupSource:
     with db.create_session() as session:
         backup_source = session.scalars(
-            select(BackupSource).where(BackupSource.path == str(directory))
+            select(BackupSource).where(BackupSource.local_path == str(directory))
         ).one_or_none()
 
         if backup_source is None:
@@ -87,7 +87,7 @@ def perform_backup(directory: str, s3_prefix: str) -> None:
     db_context = DatabaseContext(config.database)
     manifest_builder = BackupManifestBuilder(db_context)
     object_store_client = ObjectStoreClient(
-        credentials=config.s3_credentials, config=config.s3
+        credentials=config.s3_credentials, config=config.s3, backup_prefix=s3_prefix
     )
 
     backup_source = get_or_create_backup_source(db_context, backup_directory)

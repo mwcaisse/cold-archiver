@@ -101,7 +101,7 @@ class BackupManifestBuilder:
     def _get_latest_backup_for_directory(self, directory: Path) -> Backup | None:
         with self._db.create_session() as session:
             backup_source = session.scalars(
-                select(BackupSource).where(BackupSource.local_path == directory)
+                select(BackupSource).where(BackupSource.local_path == str(directory))
             ).one_or_none()
 
             # No backup for this directory

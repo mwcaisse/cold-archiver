@@ -23,6 +23,7 @@ class BackupDirectoryConfiguration(BaseModel):
     Configures which folders you want to be backed up on your system
     """
 
+    name: str
     # Path to the local directory to backup
     local_path: str
     # Prefix of where to upload the backups to S3

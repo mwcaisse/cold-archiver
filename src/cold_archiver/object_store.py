@@ -9,7 +9,10 @@ from cold_archiver.config import ObjectStoreConfiguration, ObjectStoreCredential
 
 class ObjectStoreClient:
     def __init__(
-        self, credentials: ObjectStoreCredentials, config: ObjectStoreConfiguration
+        self,
+        credentials: ObjectStoreCredentials,
+        config: ObjectStoreConfiguration,
+        backup_prefix: str | None = None,
     ):
         self._client = Minio(
             endpoint=config.endpoint,
@@ -20,7 +23,14 @@ class ObjectStoreClient:
         )
 
         self.bucket = config.bucket
-        self.prefix = config.prefix
+
+        if config.prefix is not None:
+            if backup_prefix is not None:
+                self.prefix = os.path.join(config.prefix, backup_prefix)
+            else:
+                self.prefix = config.prefix
+        else:
+            self.prefix = None
 
     def upload_file(self, local_path: Path, object_name: str, content_type: str):
         object_key = self._create_object_path(object_name)

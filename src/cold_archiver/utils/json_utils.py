@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from pathlib import PosixPath
 
 
 def json_default_handler(val):
@@ -12,4 +13,7 @@ def json_default_handler(val):
     if isinstance(val, uuid.UUID):
         return str(val)
 
-    return TypeError(f"Cannot serialize {type(val).__name__}")
+    if isinstance(val, PosixPath):
+        return str(val)
+
+    raise TypeError(f"Cannot serialize {type(val).__name__}")
