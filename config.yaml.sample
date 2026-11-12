@@ -11,8 +11,10 @@ database:
   path: "backups.sqlite"
 
 backups:
-  - local_path: "/opt/backup1"
+  - name: "backup1"
+    local_path: "/opt/backup1"
     s3_prefix: "backup_1"
 
-  - local_path: "/opt/backup2"
+  - name: "backup2"
+    local_path: "/opt/backup2"
     s3_prefix: "backup_2"

@@ -46,9 +46,11 @@ database:
   path: "{database_path}"
 
 backups:
-  - local_path: /srv/photos
+  - name: photos
+    local_path: /srv/photos
     s3_prefix: photos
-  - local_path: /srv/documents
+  - name: documents
+    local_path: /srv/documents
     s3_prefix: documents
 """,
         encoding="utf-8",
@@ -81,6 +83,10 @@ def test_load_config_parses_yaml_and_resolves_relative_paths(
     assert config.s3_credentials is not None
     assert config.s3_credentials.access_key == "test-access-key"
     assert config.s3_credentials.secret_key == "test-secret-key"
+    assert [backup.name for backup in config.backups] == [
+        "photos",
+        "documents",
+    ]
     assert [backup.local_path for backup in config.backups] == [
         "/srv/photos",
         "/srv/documents",
